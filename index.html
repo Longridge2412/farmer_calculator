@@ -1,0 +1,1056 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>ハウス資材かんたん計算 | 農家DX</title>
+  <meta name="description" content="有機栽培対応 ハウス資材の自動計算・記録管理Webアプリ" />
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.3.1/umd/react.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.3.1/umd/react-dom.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.26.4/babel.min.js"></script>
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body>
+  <div id="root"></div>
+  <script type="text/babel">
+const { useState, useRef, useEffect, useMemo } = React;
+
+// ================================================================
+//  ハウス資材かんたん計算 v3.3 — 有機栽培対応
+//  ① ハウス登録  ② チャット相談（カテゴリ別質問フロー）
+//  ③ 資材記録（累計・個別削除）
+// ================================================================
+
+// ── 作物マスタ ──
+const CROPS = [
+  { id: "tomato",    name: "トマト",     emoji: "🍅", nPer10a: 15, pPer10a: 15, kPer10a: 15, ropePer: 2.5, clipPer: 2, spacing: 0.45, rows: 2 },
+  { id: "cucumber",  name: "きゅうり",   emoji: "🥒", nPer10a: 18, pPer10a: 15, kPer10a: 18, ropePer: 3.0, clipPer: 3, spacing: 0.50, rows: 2 },
+  { id: "pepper",    name: "ピーマン",   emoji: "🫑", nPer10a: 14, pPer10a: 14, kPer10a: 14, ropePer: 2.0, clipPer: 2, spacing: 0.50, rows: 2 },
+  { id: "strawberry",name: "いちご",     emoji: "🍓", nPer10a: 10, pPer10a: 12, kPer10a: 10, ropePer: 0,   clipPer: 0, spacing: 0.25, rows: 3 },
+  { id: "lettuce",   name: "レタス",     emoji: "🥬", nPer10a: 12, pPer10a: 12, kPer10a: 12, ropePer: 0,   clipPer: 0, spacing: 0.30, rows: 4 },
+  { id: "eggplant",  name: "なす",       emoji: "🍆", nPer10a: 20, pPer10a: 15, kPer10a: 15, ropePer: 2.5, clipPer: 2, spacing: 0.60, rows: 2 },
+  { id: "other",     name: "その他",     emoji: "🌱", nPer10a: 12, pPer10a: 12, kPer10a: 12, ropePer: 2.0, clipPer: 1, spacing: 0.40, rows: 2 },
+];
+
+// ── 肥料マスタ（化成＋有機） ──
+const FERTILIZERS = [
+  { id: "8-8-8",    name: "化成 8-8-8",       n: 8,  p: 8,  k: 8,  priceKg: 80,  organic: false },
+  { id: "14-14-14", name: "化成 14-14-14",     n: 14, p: 14, k: 14, priceKg: 120, organic: false },
+  { id: "org-6-6-6",name: "有機配合 6-6-6",    n: 6,  p: 6,  k: 6,  priceKg: 100, organic: true, jas: true },
+  { id: "chicken",  name: "発酵鶏糞",          n: 3,  p: 5,  k: 3,  priceKg: 30,  organic: true, jas: true },
+  { id: "cattle",   name: "牛糞堆肥",          n: 1,  p: 1,  k: 1.5,priceKg: 15,  organic: true, jas: true },
+  { id: "pig",      name: "豚糞堆肥",          n: 3,  p: 5,  k: 3,  priceKg: 25,  organic: true, jas: true },
+  { id: "rapeseed", name: "菜種粕",            n: 5,  p: 2,  k: 1,  priceKg: 60,  organic: true, jas: true },
+  { id: "fishmeal", name: "魚粉",              n: 7,  p: 6,  k: 0,  priceKg: 90,  organic: true, jas: true },
+  { id: "bonemeal", name: "骨粉",              n: 0,  p: 20, k: 0,  priceKg: 70,  organic: true, jas: true },
+  { id: "ricebran", name: "米ぬか",            n: 2,  p: 5,  k: 1,  priceKg: 20,  organic: true, jas: true },
+  { id: "batguano", name: "バットグアノ",       n: 0,  p: 20, k: 0,  priceKg: 150, organic: true, jas: true },
+  { id: "crabshell",name: "カニ殻",            n: 3,  p: 3,  k: 0,  priceKg: 80,  organic: true, jas: true },
+  { id: "woodash",  name: "草木灰",            n: 0,  p: 3,  k: 7,  priceKg: 40,  organic: true, jas: true },
+];
+
+// ── 防除資材マスタ ──
+const PEST_CONTROLS = [
+  { id: "bt",       name: "BT剤（フローバックDF等）",  jas: true,  dilution: 1000, targets: "アオムシ、ヨトウムシ", harvestDays: 0 },
+  { id: "copper",   name: "銅剤（Zボルドー等）",        jas: true,  dilution: 500,  targets: "べと病、疫病",       harvestDays: 0 },
+  { id: "sulfur",   name: "硫黄剤（イオウフロアブル等）",jas: true,  dilution: 300,  targets: "うどんこ病",          harvestDays: 0 },
+  { id: "neem",     name: "ニームオイル",                jas: true,  dilution: 500,  targets: "アブラムシ、コナジラミ", harvestDays: 0 },
+  { id: "starch",   name: "デンプン液剤（粘着くん等）",  jas: true,  dilution: 100,  targets: "アブラムシ、ハダニ",   harvestDays: 0 },
+  { id: "machine",  name: "マシン油乳剤",                jas: true,  dilution: 100,  targets: "カイガラムシ、ハダニ", harvestDays: 14 },
+  { id: "pyrethr",  name: "除虫菊乳剤",                  jas: true,  dilution: 500,  targets: "各種害虫",            harvestDays: 1 },
+];
+
+// ── 土壌改良材マスタ ──
+const SOIL_AMENDMENTS = [
+  { id: "dolomite",  name: "苦土石灰",     jas: true,  rateM2: 0.1,  note: "pH矯正。Mg補給" },
+  { id: "oyster",    name: "カキ殻石灰",   jas: true,  rateM2: 0.1,  note: "緩やかなpH矯正" },
+  { id: "charc",     name: "くん炭",        jas: true,  rateM2: 0.2,  note: "排水・通気改善。微生物活性" },
+  { id: "zeolite",   name: "ゼオライト",    jas: true,  rateM2: 0.15, note: "保肥力向上。CECアップ" },
+  { id: "perlite",   name: "パーライト",    jas: true,  rateM2: 0.1,  note: "排水改善。軽量化" },
+  { id: "vermic",    name: "バーミキュライト",jas: true, rateM2: 0.1,  note: "保水力向上" },
+  { id: "greenm",    name: "緑肥（ソルゴー等）",jas: true,rateM2: 0,  note: "すき込みで有機物補給" },
+];
+
+// ── 資材カテゴリ定義 ──
+const MATERIAL_CATEGORIES = [
+  { id: "fert_organic",  name: "肥料（有機）",   icon: "🌿",
+    keywords: ["堆肥","鶏糞","牛糞","豚糞","菜種粕","魚粉","骨粉","米ぬか","バットグアノ","カニ殻","草木灰","有機","ぼかし","油粕"] },
+  { id: "fert_chemical", name: "肥料（化成）",   icon: "💊",
+    keywords: ["化成","尿素","硫安","過リン酸","塩化カリ"] },
+  { id: "pest_control",  name: "防除資材",       icon: "🛡",
+    keywords: ["農薬","防除","殺虫","殺菌","BT","ボルドー","硫黄","ニーム","デンプン","マシン油","除虫菊","木酢液","竹酢液"] },
+  { id: "soil_amend",    name: "土壌改良材",     icon: "🪨",
+    keywords: ["石灰","苦土","カキ殻","くん炭","ゼオライト","パーライト","バーミキュライト","緑肥","腐葉土"] },
+  { id: "film",          name: "被覆フィルム",   icon: "🎞",
+    keywords: ["フィルム","ビニール","被覆","張替","PO","農ビ","農PO"] },
+  { id: "mulch",         name: "マルチ",         icon: "🟫",
+    keywords: ["マルチ","畝","敷"] },
+  { id: "seedling",      name: "苗・種子",       icon: "🌱",
+    keywords: ["苗","種","種子","なえ","タネ","接木","実生"] },
+  { id: "training",      name: "誘引資材",       icon: "🧵",
+    keywords: ["紐","ひも","ロープ","誘引","クリップ","支柱","ポール"] },
+  { id: "other",         name: "その他",         icon: "📦", keywords: [] },
+];
+
+// カテゴリごとの追加質問
+const CATEGORY_EXTRA_QUESTIONS = {
+  fert_organic: [
+    { key: "npk",      label: "N-P-K成分比",  question: "N-P-K成分比はわかりますか？（例: 3-5-3）ラベル写真でも読み取れます。分からなければ「不明」でOK。", parse: parseNPK },
+    { key: "jasApproved", label: "JAS有機適合", question: "JAS有機認証で使用可能ですか？（はい/いいえ/不明）", parse: parseYesNoUnknown },
+    { key: "supplier",    label: "購入先",      question: "購入先があれば教えてください。（なければ「なし」でOK）", parse: v => v === "なし" ? "" : v.trim() },
+  ],
+  fert_chemical: [
+    { key: "npk",      label: "N-P-K成分比",  question: "N-P-K成分比を教えてください。（例: 8-8-8）", parse: parseNPK },
+  ],
+  pest_control: [
+    { key: "dilution",    label: "希釈倍率",     question: "希釈倍率を教えてください。（例: 1000）", parse: v => { const n = parseInt(v.replace(/[倍x×]/g, "")); return n > 0 ? n : null; } },
+    { key: "target",      label: "対象病害虫",   question: "対象の病害虫は何ですか？（例: アブラムシ）分からなければ「不明」でOK。", parse: v => v === "不明" ? "" : v.trim() },
+    { key: "harvestDays", label: "収穫前日数",   question: "収穫前日数はわかりますか？（ラベルに記載。分からなければ「不明」でOK）", parse: v => { if (v === "不明") return -1; const n = parseInt(v); return isNaN(n) ? null : n; } },
+    { key: "jasApproved", label: "JAS有機適合",  question: "JAS有機認証で使用可能ですか？（はい/いいえ/不明）", parse: parseYesNoUnknown },
+  ],
+  soil_amend: [
+    { key: "jasApproved", label: "JAS有機適合",  question: "JAS有機認証で使用可能ですか？（はい/いいえ/不明）", parse: parseYesNoUnknown },
+  ],
+  film: [
+    { key: "thickness",   label: "厚み",         question: "フィルムの厚みはわかりますか？（例: 0.1mm）不明なら「不明」でOK。", parse: v => v === "不明" ? "" : v.trim() },
+    { key: "width",       label: "幅",           question: "フィルムの幅は？（例: 540cm）", parse: v => v === "不明" ? "" : v.trim() },
+  ],
+  seedling: [
+    { key: "variety",     label: "品種",         question: "品種名はわかりますか？（例: 桃太郎、不明ならOK）", parse: v => v === "不明" ? "" : v.trim() },
+    { key: "grafted",     label: "接木/実生",    question: "接木苗ですか？実生苗ですか？（接木/実生/不明）", parse: v => { if (["接木","接ぎ木"].includes(v)) return "接木"; if (["実生","自根"].includes(v)) return "実生"; return "不明"; } },
+  ],
+};
+
+function parseNPK(v) {
+  const m = v.match(/(\d+\.?\d*)\s*[-ー−]\s*(\d+\.?\d*)\s*[-ー−]\s*(\d+\.?\d*)/);
+  if (m) return { n: parseFloat(m[1]), p: parseFloat(m[2]), k: parseFloat(m[3]) };
+  if (["不明","わからない","わかりません"].some(k => v.includes(k))) return "unknown";
+  return null;
+}
+
+function parseYesNoUnknown(v) {
+  if (["はい","yes","適合","対応","○","ok","おk"].some(k => v.toLowerCase().includes(k))) return "yes";
+  if (["いいえ","no","不適合","非対応","×","だめ"].some(k => v.toLowerCase().includes(k))) return "no";
+  return "unknown";
+}
+
+function detectCategory(text) {
+  const lower = text.toLowerCase();
+  for (const cat of MATERIAL_CATEGORIES) {
+    if (cat.keywords.some(k => lower.includes(k))) return cat;
+  }
+  return null;
+}
+
+// ── ハウス登録の必須項目 ──
+const REQUIRED_HOUSE_FIELDS = [
+  { key: "name",          label: "ハウス名",   check: v => typeof v === "string" && v.trim().length > 0 },
+  { key: "width",         label: "間口",       check: v => typeof v === "number" && v > 0 },
+  { key: "length",        label: "奥行き",     check: v => typeof v === "number" && v > 0 },
+  { key: "peakH",         label: "棟高",       check: v => typeof v === "number" && v > 0 },
+  { key: "sideH",         label: "肩高",       check: v => typeof v === "number" && v > 0 },
+  { key: "cropId",        label: "栽培作物",   check: v => typeof v === "string" && v.length > 0 },
+  { key: "filmName",      label: "フィルム種類", check: v => typeof v === "string" && v.trim().length > 0 },
+  { key: "filmLifeYears", label: "耐用年数",   check: v => typeof v === "number" && v > 0 },
+  { key: "filmDate",      label: "前回張替え", check: v => typeof v === "string" && v.length > 0 },
+];
+
+function validateHouse(house) {
+  const missing = [];
+  for (const f of REQUIRED_HOUSE_FIELDS) { if (!f.check(house[f.key])) missing.push(f); }
+  return { isComplete: missing.length === 0, missing };
+}
+
+function validateMaterialRecord(item) {
+  const missing = [];
+  if (!item.name || item.name.trim().length === 0) missing.push("資材名");
+  if (!item.amount || item.amount <= 0) missing.push("数量");
+  if (!item.unit || item.unit.trim().length === 0) missing.push("単位");
+  return { isComplete: missing.length === 0, missing };
+}
+
+function buildMissingQuestion(item) {
+  const { missing } = validateMaterialRecord(item);
+  if (missing.length === 0) return null;
+  const known = [];
+  if (item.name) known.push(`資材名: ${item.name}`);
+  if (item.amount > 0) known.push(`数量: ${item.amount}`);
+  if (item.unit) known.push(`単位: ${item.unit}`);
+  if (item.house) known.push(`ハウス: ${item.house}`);
+  let q = "";
+  if (known.length > 0) q += `${known.join("、")} まで分かりました。\n\n`;
+  q += `記録するには ${missing.join("・")} が必要です。\n`;
+  if (missing.includes("資材名") && missing.includes("数量") && missing.includes("単位")) q += "「トマト苗 200株」のように教えてください。";
+  else if (missing.includes("数量") && missing.includes("単位")) q += `「${item.name}」の数量と単位を教えてください。\n例: 200株、50kg、10巻 など`;
+  else if (missing.includes("数量")) q += "数量はどれくらいですか？";
+  else if (missing.includes("単位")) q += "単位は何ですか？（株、kg、m、本、袋 など）";
+  else if (missing.includes("資材名")) q += "何の資材ですか？";
+  return q;
+}
+
+// ── 計算エンジン ──
+const r1 = v => Math.round(v * 10) / 10;
+const r0 = v => Math.round(v);
+
+function calcArch(w, peakH, sideH) {
+  const a = w / 2, b = peakH - sideH;
+  const h = ((a - b) ** 2) / ((a + b) ** 2);
+  return Math.PI * (a + b) * (1 + (3 * h) / (10 + Math.sqrt(4 - 3 * h)));
+}
+
+function calcFilm(house) {
+  const { width: w, length: l, peakH, sideH, filmName, filmLifeYears } = house;
+  const m = 0.2, ov = 0.15;
+  const arch = calcArch(w, peakH, sideH);
+  const roof  = r1((arch + m * 2) * (l + m * 2));
+  const side  = r1((sideH + m + ov) * (l + m * 2) * 2);
+  const tsuma = r1((w + m * 2) * (peakH + m) * 2);
+  const total = r1(roof + side + tsuma);
+  const filmYear = house.filmDate ? parseInt(house.filmDate.split("-")[0]) : null;
+  const nextReplace = filmYear && filmLifeYears ? filmYear + filmLifeYears : null;
+  const needsReplace = nextReplace ? nextReplace <= new Date().getFullYear() : false;
+  return { filmName: filmName || "フィルム", roof, side, tsuma, total, nextReplace, needsReplace };
+}
+
+function calcFertilizer(house, fertId, customNPK) {
+  const crop = CROPS.find(c => c.id === house.cropId) || CROPS[6];
+  let fert = FERTILIZERS.find(f => f.id === fertId);
+  if (customNPK && customNPK.n != null) {
+    fert = { ...fert, n: customNPK.n, p: customNPK.p, k: customNPK.k, name: fert ? fert.name : `カスタム ${customNPK.n}-${customNPK.p}-${customNPK.k}` };
+  }
+  if (!fert) fert = FERTILIZERS[0];
+  const area10a = (house.width * house.length) / 1000;
+  const needN = r1(crop.nPer10a * area10a);
+  const needP = r1(crop.pPer10a * area10a);
+  const needK = r1(crop.kPer10a * area10a);
+  const amount = r1(Math.max(
+    fert.n > 0 ? needN / (fert.n / 100) : 0,
+    fert.p > 0 ? needP / (fert.p / 100) : 0,
+    fert.k > 0 ? needK / (fert.k / 100) : 0
+  ));
+  const cost = r0(amount * (fert.priceKg || 0));
+  return { crop, fert, needN, needP, needK, amount, cost };
+}
+
+function calcSupplies(house) {
+  const crop = CROPS.find(c => c.id === house.cropId) || CROPS[6];
+  const bedLen = house.length - 1;
+  const plants = r0(bedLen / crop.spacing * crop.rows);
+  const rope   = r1(plants * crop.ropePer);
+  const clips  = r0(plants * crop.clipPer);
+  const mulch  = r1(house.length * crop.rows * 1.1);
+  return { crop, plants, rope, clips, mulch };
+}
+
+function calcDilution(dilutionRate, waterLiters) {
+  if (!dilutionRate || dilutionRate <= 0 || !waterLiters || waterLiters <= 0) return null;
+  const chemMl = r1((waterLiters * 1000) / dilutionRate);
+  return { chemMl, waterLiters, dilutionRate };
+}
+
+// ── チャット解析エンジン ──
+function parseChat(input, houses) {
+  const lower = input.toLowerCase();
+  let targetHouses = [];
+  if (["全部","全棟","全て","すべて","まとめて","全ハウス"].some(k => lower.includes(k))) targetHouses = houses;
+  else { for (const h of houses) { if ([h.name, h.name.replace("ハウス",""), h.id+"号"].some(p => lower.includes(p.toLowerCase()))) targetHouses.push(h); } }
+
+  const categories = [];
+  if (["フィルム","ビニール","被覆","張替","張り替","po","農ビ","農po","屋根"].some(k => lower.includes(k))) categories.push("film");
+  if (["肥料","化成","施肥","有機","追肥","元肥","堆肥","鶏糞","牛糞","菜種粕","魚粉","骨粉","米ぬか","ぼかし"].some(k => lower.includes(k))) categories.push("fert");
+  if (["マルチ","畝","敷"].some(k => lower.includes(k))) categories.push("mulch");
+  if (["紐","ひも","ロープ","誘引","クリップ"].some(k => lower.includes(k))) categories.push("rope");
+  if (["農薬","防除","殺虫","殺菌","希釈"].some(k => lower.includes(k))) categories.push("pest");
+  if (["石灰","土壌改良","くん炭","ゼオライト"].some(k => lower.includes(k))) categories.push("soil");
+  if (["資材","必要","全部","まとめ","一覧","何がいる","どれくらい"].some(k => lower.includes(k)) && categories.length === 0) categories.push("film","fert","mulch","rope");
+
+  let fertType = "auto";
+  if (["有機","堆肥","鶏糞","牛糞","豚糞","菜種粕","魚粉","骨粉","米ぬか","ぼかし","草木灰","カニ殻"].some(k => lower.includes(k))) fertType = "organic";
+  if (["化成","尿素"].some(k => lower.includes(k))) fertType = "chemical";
+
+  let fertId = "8-8-8";
+  for (const f of FERTILIZERS) { if (lower.includes(f.name.toLowerCase()) || lower.includes(f.id)) { fertId = f.id; break; } }
+  if (fertType === "organic" && fertId === "8-8-8") fertId = "org-6-6-6";
+
+  if (targetHouses.length === 0 && categories.length > 0) return { type: "ask_house", houses };
+  if (targetHouses.length > 0 && categories.length === 0) return { type: "ask_category", targetHouses };
+  if (targetHouses.length === 0 && categories.length === 0) return { type: "help" };
+
+  const unconfirmed = targetHouses.filter(h => !h.confirmed);
+  if (unconfirmed.length > 0) return { type: "incomplete_houses", houses: unconfirmed };
+  const incomplete = targetHouses.filter(h => !validateHouse(h).isComplete);
+  if (incomplete.length > 0) return { type: "missing_info", houses: incomplete, missingDetails: incomplete.map(h => ({ house: h, missing: validateHouse(h).missing })) };
+
+  const items = [];
+  for (const h of targetHouses) {
+    const crop = CROPS.find(c => c.id === h.cropId) || CROPS[6];
+    const entry = { house: h, crop, details: [] };
+
+    if (categories.includes("film")) {
+      const r = calcFilm(h);
+      const filmItems = [
+        { label: "屋根", value: r.roof, unit: "m²" },
+        { label: "側面", value: r.side, unit: "m²" },
+        { label: "妻面", value: r.tsuma, unit: "m²" },
+        { label: "合計", value: r.total, unit: "m²", highlight: true },
+      ];
+      if (r.needsReplace) filmItems.push({ label: "⚠ 張替え時期", value: `${r.nextReplace}年`, unit: "", highlight: true });
+      entry.details.push({ category: "被覆フィルム", materialName: r.filmName, items: filmItems,
+        summary: { value: r.total, unit: "m²" }, saveable: { name: r.filmName, amount: r.total, unit: "m²", cost: 0, cat: "film" } });
+    }
+    if (categories.includes("fert")) {
+      const r = calcFertilizer(h, fertId);
+      const jasLabel = r.fert.jas ? " [JAS適合]" : r.fert.organic ? " [有機]" : "";
+      entry.details.push({ category: `肥料${jasLabel}`, materialName: r.fert.name,
+        items: [
+          { label: "必要 N-P-K", value: `${r.needN}-${r.needP}-${r.needK}`, unit: "kg" },
+          { label: `${r.fert.name} 必要量`, value: r.amount, unit: "kg", highlight: true },
+          { label: "成分比 N-P-K", value: `${r.fert.n}-${r.fert.p}-${r.fert.k}`, unit: "%" },
+        ],
+        summary: { value: r.amount, unit: "kg", cost: r.cost },
+        saveable: { name: r.fert.name, amount: r.amount, unit: "kg", cost: r.cost, cat: r.fert.organic ? "fert_organic" : "fert_chemical", extra: { npk: { n: r.fert.n, p: r.fert.p, k: r.fert.k }, jasApproved: r.fert.jas ? "yes" : "unknown" } } });
+    }
+    if (categories.includes("mulch")) {
+      const r = calcSupplies(h);
+      entry.details.push({ category: "マルチ", materialName: "マルチ 95cm",
+        items: [{ label: "畝数", value: crop.rows, unit: "本" }, { label: "必要長さ（余裕込）", value: r.mulch, unit: "m", highlight: true }],
+        summary: { value: r.mulch, unit: "m" }, saveable: { name: "マルチ 95cm", amount: r.mulch, unit: "m", cost: 0, cat: "mulch" } });
+    }
+    if (categories.includes("rope")) {
+      const r = calcSupplies(h);
+      const sub = [{ label: "推定株数", value: r.plants, unit: "株" }];
+      const saveables = [];
+      if (r.rope > 0) { sub.push({ label: "誘引紐", value: r.rope, unit: "m", highlight: true }); saveables.push({ name: "誘引紐", amount: r.rope, unit: "m", cost: 0, cat: "training" }); }
+      if (r.clips > 0) { sub.push({ label: "クリップ", value: r.clips, unit: "個", highlight: true }); saveables.push({ name: "クリップ", amount: r.clips, unit: "個", cost: 0, cat: "training" }); }
+      if (saveables.length > 0) entry.details.push({ category: "誘引資材", materialName: "紐・クリップ", items: sub, saveables });
+    }
+    if (categories.includes("pest")) {
+      const areaM2 = h.width * h.length;
+      const waterL = r1(areaM2 * 0.1);
+      entry.details.push({ category: "防除資材", materialName: "希釈計算",
+        items: [
+          { label: "ハウス面積", value: areaM2, unit: "m²" },
+          { label: "散布量目安", value: waterL, unit: "L", highlight: true },
+          { label: "※希釈倍率はチャットで相談してください", value: "", unit: "" },
+        ] });
+    }
+    if (categories.includes("soil")) {
+      const areaM2 = h.width * h.length;
+      const limeKg = r1(areaM2 * 0.1);
+      entry.details.push({ category: "土壌改良材", materialName: "石灰（目安）",
+        items: [
+          { label: "ハウス面積", value: areaM2, unit: "m²" },
+          { label: "苦土石灰 目安", value: limeKg, unit: "kg", highlight: true },
+          { label: "※実際はpH測定で調整", value: "", unit: "" },
+        ],
+        saveable: { name: "苦土石灰", amount: limeKg, unit: "kg", cost: 0, cat: "soil_amend" } });
+    }
+    if (entry.details.length > 0) items.push(entry);
+  }
+  return { type: "result", items };
+}
+
+function simulateFileAnalysis(fileName) {
+  const lower = fileName.toLowerCase();
+  if (lower.match(/肥料|化成|有機|尿素/)) return { name: "化成肥料 8-8-8", detail: "N:8% P:8% K:8%", suggestion: "成分 N-P-K = 8-8-8 として計算に使えます。", cat: "fert_chemical" };
+  if (lower.match(/鶏糞|牛糞|堆肥|菜種|魚粉|骨粉|ぼかし/)) return { name: "発酵鶏糞", detail: "N:3% P:5% K:3%", suggestion: "有機肥料として記録できます。", cat: "fert_organic" };
+  if (lower.match(/農薬|殺虫|殺菌|防除|bt|ボルドー|硫黄|ニーム/)) return { name: "防除資材", detail: "添付の内容を確認", suggestion: "希釈倍率や対象病害虫も記録できます。", cat: "pest_control" };
+  if (lower.match(/フィルム|po|ビニール|農ビ|被覆/)) return { name: "POフィルム 0.1mm", detail: "幅540cm × 100m巻", suggestion: "このフィルムで被覆面積を計算できます。", cat: "film" };
+  if (lower.match(/マルチ|mulch/)) return { name: "黒マルチ 95cm幅", detail: "95cm × 200m", suggestion: "畝数に合わせて必要長さを計算できます。", cat: "mulch" };
+  if (lower.match(/苗|なえ/)) return { name: "トマト苗（接木）", detail: "接木苗ポット", suggestion: "数量を入力して記録できます。", cat: "seedling" };
+  if (lower.match(/石灰|くん炭|ゼオライト/)) return { name: "苦土石灰", detail: "土壌改良材", suggestion: "施用量を記録できます。", cat: "soil_amend" };
+  return { name: fileName.replace(/\.[^.]+$/, ""), detail: "添付ファイルの内容を読み取りました", suggestion: "内容を確認して記録に追加できます。", cat: null };
+}
+
+function parseDirectRecord(input) {
+  const qtyMatch = input.match(/(\d+\.?\d*)\s*(株|本|袋|個|kg|m|巻|箱|枚|セット|パック|ケース|L|リットル|g|cc|ml)/i);
+  const amount = qtyMatch ? parseFloat(qtyMatch[1]) : 0;
+  const unit = qtyMatch ? qtyMatch[2] : "";
+  let name = input
+    .replace(/\d+\.?\d*\s*(株|本|袋|個|kg|m|巻|箱|枚|セット|パック|ケース|L|リットル|g|cc|ml)/gi, "")
+    .replace(/(買った|購入|注文|使った|使用|入れた|撒いた|敷いた|張った|記録|登録|追加)/g, "")
+    .replace(/[をにへで、。]/g, "").trim();
+  let house = "";
+  const houseMatch = input.match(/(\d+号(?:ハウス)?)/);
+  if (houseMatch) {
+    house = houseMatch[1].includes("ハウス") ? houseMatch[1] : houseMatch[1] + "ハウス";
+    name = name.replace(/\d+号(?:ハウス)?/, "").trim();
+  }
+  if (name || amount > 0) {
+    const cat = detectCategory(name || input);
+    return { name: name || "", amount, unit, house, cost: 0, cat: cat?.id || null, extra: {} };
+  }
+  return null;
+}
+
+function findRelatedRecords(records, houseName, materialKeywords) {
+  return records.filter(r => {
+    const matchHouse = !houseName || r.house === houseName;
+    const matchMaterial = !materialKeywords || materialKeywords.some(k => r.name.includes(k));
+    return matchHouse && matchMaterial;
+  });
+}
+
+// ── 共通UIパーツ ──
+function Badge({ children, color = "green" }) {
+  const c = { green: "bg-green-100 text-green-700", red: "bg-red-100 text-red-700", amber: "bg-amber-100 text-amber-700", blue: "bg-blue-100 text-blue-700", gray: "bg-gray-100 text-gray-600", purple: "bg-purple-100 text-purple-700" };
+  return <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${c[color] || c.gray}`}>{children}</span>;
+}
+
+function ConfirmDialog({ title, message, onConfirm, onCancel, confirmLabel = "OK", confirmColor = "green" }) {
+  const btnColor = confirmColor === "red" ? "bg-red-600 hover:bg-red-700" : "bg-green-600 hover:bg-green-700";
+  return (
+    <div className="fixed inset-0 bg-black bg-opacity-40 flex items-center justify-center z-50 px-6">
+      <div className="bg-white rounded-2xl shadow-xl w-full max-w-sm p-5">
+        <div className="text-sm font-bold text-gray-800 mb-2">{title}</div>
+        <div className="text-sm text-gray-600 whitespace-pre-wrap mb-4">{message}</div>
+        <div className="flex gap-2">
+          <button onClick={onCancel} className="flex-1 py-2.5 bg-gray-100 text-gray-600 text-sm font-medium rounded-xl hover:bg-gray-200 transition-colors">キャンセル</button>
+          <button onClick={onConfirm} className={`flex-1 py-2.5 text-white text-sm font-medium rounded-xl transition-colors ${btnColor}`}>{confirmLabel}</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+const INITIAL_HOUSES = [
+  { id: 1, name: "1号ハウス", width: 5.4, length: 20, peakH: 2.8, sideH: 1.2, cropId: "tomato",    filmName: "POフィルム 透明", filmLifeYears: 3, filmDate: "2024-04", snowProof: false, memo: "主力トマト。南向き。", confirmed: true },
+  { id: 2, name: "2号ハウス", width: 5.4, length: 15, peakH: 2.8, sideH: 1.2, cropId: "cucumber",  filmName: "POフィルム 透明", filmLifeYears: 3, filmDate: "2025-03", snowProof: false, memo: "きゅうり夏作用", confirmed: true },
+  { id: 3, name: "3号ハウス", width: 6.0, length: 18, peakH: 3.0, sideH: 1.3, cropId: "strawberry",filmName: "農PO 梨地タイプ", filmLifeYears: 5, filmDate: "2023-10", snowProof: true,  memo: "いちご高設栽培。耐雪補強済み。", confirmed: true },
+  { id: 4, name: "4号ハウス", width: 3.6, length: 10, peakH: 2.2, sideH: 0.8, cropId: "lettuce",   filmName: "農ビ 0.1mm",      filmLifeYears: 1, filmDate: "2025-11", snowProof: false, memo: "葉物用小型ハウス", confirmed: true },
+];
+
+// ================================================================
+//  画面① ハウス登録
+// ================================================================
+function HouseRegister({ houses, setHouses }) {
+  const [editing, setEditing] = useState(null);
+  const [confirmAction, setConfirmAction] = useState(null);
+  const addHouse = () => {
+    const newId = Math.max(0, ...houses.map(h => h.id)) + 1;
+    setHouses([...houses, { id: newId, name: `${newId}号ハウス`, width: 0, length: 0, peakH: 0, sideH: 0, cropId: "tomato", filmName: "", filmLifeYears: 0, filmDate: "", snowProof: false, memo: "", confirmed: false }]);
+    setEditing(newId);
+  };
+  const update = (id, k, v) => setHouses(houses.map(h => h.id === id ? { ...h, [k]: v, confirmed: false } : h));
+  const executeAction = () => {
+    if (!confirmAction) return;
+    if (confirmAction.type === "delete") { setHouses(houses.filter(h => h.id !== confirmAction.houseId)); if (editing === confirmAction.houseId) setEditing(null); }
+    else if (confirmAction.type === "register") { setHouses(houses.map(h => h.id === confirmAction.houseId ? { ...h, confirmed: true } : h)); setEditing(null); }
+    setConfirmAction(null);
+  };
+  const totalRegistered = houses.filter(h => h.confirmed).length;
+  const totalDraft = houses.filter(h => !h.confirmed).length;
+
+  return (
+    <div className="flex flex-col gap-3">
+      <div className="p-3 bg-green-50 rounded-xl text-xs text-green-700">ハウスの基本情報を登録しておくと、チャットで「1号ハウスのフィルム」と聞くだけで自動計算できます。必須項目をすべて入力して「登録を確認」を押してください。</div>
+      <div className="flex gap-2 text-xs">
+        <Badge color="green">登録済み {totalRegistered}棟</Badge>
+        {totalDraft > 0 && <Badge color="amber">下書き {totalDraft}棟</Badge>}
+      </div>
+      {houses.map(h => {
+        const isOpen = editing === h.id;
+        const crop = CROPS.find(c => c.id === h.cropId);
+        const { isComplete, missing } = validateHouse(h);
+        const isMissing = (key) => missing.some(m => m.key === key);
+        return (
+          <div key={h.id} className={`bg-white rounded-xl shadow-sm border overflow-hidden ${h.confirmed ? "border-gray-100" : "border-amber-300"}`}>
+            <button onClick={() => setEditing(isOpen ? null : h.id)} className="w-full px-4 py-3 flex items-center justify-between text-left hover:bg-gray-50 transition-colors">
+              <div className="flex items-center gap-2">
+                <span className="text-xl">{crop?.emoji || "🌱"}</span>
+                <div>
+                  <div className="font-bold text-gray-800 text-sm flex items-center gap-1.5">{h.name}{h.snowProof && <span className="text-xs bg-blue-100 text-blue-600 px-1.5 py-0.5 rounded-full font-normal">耐雪</span>}</div>
+                  <div className="text-xs text-gray-400">{h.width > 0 && h.length > 0 ? `${h.width}m × ${h.length}m` : "サイズ未設定"}{crop ? ` ｜${crop.name}` : ""}{h.filmName ? ` ｜${h.filmName}` : ""}</div>
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                {h.confirmed ? <Badge color="green">登録済み</Badge> : isComplete ? <Badge color="amber">未確認</Badge> : <Badge color="red">情報不足</Badge>}
+                <span className="text-gray-300">{isOpen ? "▲" : "▼"}</span>
+              </div>
+            </button>
+            {isOpen && (
+              <div className="px-4 pb-4 border-t border-gray-50">
+                {missing.length > 0 && <div className="mt-3 p-2.5 bg-red-50 border border-red-100 rounded-lg"><div className="text-xs text-red-600 font-medium mb-1">未入力の必須項目：</div><div className="text-xs text-red-500">{missing.map(m => m.label).join("、")}</div></div>}
+                <div className="grid grid-cols-2 gap-3 mt-3">
+                  <div className="col-span-2"><label className="text-xs text-gray-500">ハウス名 <span className="text-red-400">*</span></label><input value={h.name} onChange={e => update(h.id, "name", e.target.value)} className={`w-full mt-1 px-3 py-2 border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-green-400 ${isMissing("name") ? "border-red-300 bg-red-50" : "border-gray-200"}`} /></div>
+                  {[["width","間口","m",0.1],["length","奥行き","m",1],["peakH","棟高","m",0.1],["sideH","肩高","m",0.1]].map(([k,l,u,s]) => (
+                    <div key={k}><label className="text-xs text-gray-500">{l} <span className="text-red-400">*</span></label><div className="flex items-center gap-1 mt-1"><input type="number" value={h[k] || ""} step={s} min={0} onChange={e => update(h.id, k, parseFloat(e.target.value)||0)} placeholder="0" className={`w-full px-3 py-2 border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-green-400 ${isMissing(k) ? "border-red-300 bg-red-50" : "border-gray-200"}`} /><span className="text-xs text-gray-400">{u}</span></div></div>
+                  ))}
+                  <div><label className="text-xs text-gray-500">栽培作物 <span className="text-red-400">*</span></label><select value={h.cropId} onChange={e => update(h.id, "cropId", e.target.value)} className="w-full mt-1 px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-green-400">{CROPS.map(c => <option key={c.id} value={c.id}>{c.emoji} {c.name}</option>)}</select></div>
+                  <div className="col-span-2"><label className="text-xs text-gray-500">フィルム種類（自由記入） <span className="text-red-400">*</span></label><input value={h.filmName || ""} onChange={e => update(h.id, "filmName", e.target.value)} placeholder="例: POフィルム 透明 0.1mm" className={`w-full mt-1 px-3 py-2 border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-green-400 ${isMissing("filmName") ? "border-red-300 bg-red-50" : "border-gray-200"}`} /></div>
+                  <div><label className="text-xs text-gray-500">前回張替え <span className="text-red-400">*</span></label><input type="month" value={h.filmDate} onChange={e => update(h.id, "filmDate", e.target.value)} className={`w-full mt-1 px-3 py-2 border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-green-400 ${isMissing("filmDate") ? "border-red-300 bg-red-50" : "border-gray-200"}`} /></div>
+                  <div><label className="text-xs text-gray-500">耐用年数 <span className="text-red-400">*</span></label><div className="flex items-center gap-1 mt-1"><input type="number" value={h.filmLifeYears || ""} step={1} min={1} max={10} onChange={e => update(h.id, "filmLifeYears", parseInt(e.target.value) || 0)} placeholder="0" className={`w-full px-3 py-2 border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-green-400 ${isMissing("filmLifeYears") ? "border-red-300 bg-red-50" : "border-gray-200"}`} /><span className="text-xs text-gray-400">年</span></div></div>
+                  <div className="col-span-2"><label className="flex items-center gap-2 cursor-pointer py-1"><input type="checkbox" checked={h.snowProof || false} onChange={e => update(h.id, "snowProof", e.target.checked)} className="w-4 h-4 text-green-600 border-gray-300 rounded focus:ring-green-400" /><span className="text-xs text-gray-600">耐雪ハウス</span><span className="text-xs text-gray-400">（積雪地域向け補強あり）</span></label></div>
+                  <div className="col-span-2"><label className="text-xs text-gray-500">メモ</label><input value={h.memo} onChange={e => update(h.id, "memo", e.target.value)} placeholder="自由にメモ…" className="w-full mt-1 px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-green-400" /></div>
+                </div>
+                <div className="flex gap-2 mt-4">
+                  {isComplete ? <button onClick={() => setConfirmAction({ type: "register", houseId: h.id })} className={`flex-1 py-2.5 text-sm font-medium rounded-xl transition-colors ${h.confirmed ? "bg-gray-100 text-gray-500 hover:bg-gray-200" : "bg-green-600 text-white hover:bg-green-700 shadow-sm"}`}>{h.confirmed ? "再登録する" : "登録を確認する"}</button>
+                  : <div className="flex-1 py-2.5 text-center text-sm text-gray-400 bg-gray-50 rounded-xl">必須項目を入力してください</div>}
+                  <button onClick={() => setConfirmAction({ type: "delete", houseId: h.id })} className="px-4 py-2.5 text-sm text-red-400 hover:text-red-600 hover:bg-red-50 rounded-xl transition-colors">削除</button>
+                </div>
+              </div>
+            )}
+          </div>
+        );
+      })}
+      <button onClick={addHouse} className="w-full py-3 text-sm text-green-600 border-2 border-dashed border-green-300 rounded-xl hover:bg-green-50 transition-all font-medium">+ ハウスを追加</button>
+      {confirmAction?.type === "register" && (() => { const h = houses.find(x => x.id === confirmAction.houseId); if (!h) return null; const crop = CROPS.find(c => c.id === h.cropId); return <ConfirmDialog title="ハウス登録の確認" message={`以下の内容で登録します。\n\n${h.name}\nサイズ: ${h.width}m × ${h.length}m\n棟高/肩高: ${h.peakH}m / ${h.sideH}m\n作物: ${crop?.name || "未設定"}\nフィルム: ${h.filmName}\n前回張替え: ${h.filmDate}\n耐用年数: ${h.filmLifeYears}年\n耐雪: ${h.snowProof ? "あり" : "なし"}${h.memo ? `\nメモ: ${h.memo}` : ""}`} confirmLabel="登録する" onConfirm={executeAction} onCancel={() => setConfirmAction(null)} />; })()}
+      {confirmAction?.type === "delete" && (() => { const h = houses.find(x => x.id === confirmAction.houseId); if (!h) return null; return <ConfirmDialog title="ハウスの削除" message={`「${h.name}」を削除します。\nこの操作は元に戻せません。`} confirmLabel="削除する" confirmColor="red" onConfirm={executeAction} onCancel={() => setConfirmAction(null)} />; })()}
+    </div>
+  );
+}
+
+// ================================================================
+//  画面② チャット相談（カテゴリ別質問フロー）
+// ================================================================
+function ChatPage({ houses, records, setRecords, isDesktop }) {
+  const confirmedCount = houses.filter(h => h.confirmed).length;
+  const draftCount = houses.filter(h => !h.confirmed).length;
+  const [messages, setMessages] = useState([
+    { role: "bot", type: "text",
+      text: `${confirmedCount}棟のハウスが登録されています。${draftCount > 0 ? `（下書き${draftCount}棟）` : ""}\n何でも気軽にどうぞ。` },
+  ]);
+  const [input, setInput] = useState("");
+  const [pendingSave, setPendingSave] = useState(null);
+  const [gathering, setGathering] = useState(null);
+  const [extraGathering, setExtraGathering] = useState(null);
+  const [attachedFile, setAttachedFile] = useState(null);
+  const bottomRef = useRef(null);
+  const fileInputRef = useRef(null);
+  const cameraInputRef = useRef(null);
+
+  useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages, pendingSave]);
+
+  const handleFileSelect = (e) => { const file = e.target.files?.[0]; if (!file) return; setAttachedFile({ name: file.name, url: URL.createObjectURL(file), isImage: file.type.startsWith("image/"), size: file.size }); e.target.value = ""; };
+  const removeAttachment = () => { if (attachedFile?.url) URL.revokeObjectURL(attachedFile.url); setAttachedFile(null); };
+
+  const mergeGatheringInput = (current, userInput) => {
+    const parsed = parseDirectRecord(userInput);
+    const updated = { ...current };
+    if (parsed) {
+      if (parsed.name && !updated.name) updated.name = parsed.name;
+      if (parsed.amount > 0 && !updated.amount) updated.amount = parsed.amount;
+      if (parsed.unit && !updated.unit) updated.unit = parsed.unit;
+      if (parsed.house && !updated.house) updated.house = parsed.house;
+      if (parsed.cat && !updated.cat) updated.cat = parsed.cat;
+    } else {
+      const qtyOnly = userInput.match(/^(\d+\.?\d*)\s*(株|本|袋|個|kg|m|巻|箱|枚|セット|パック|ケース|L|リットル|g|cc|ml)$/i);
+      if (qtyOnly) { updated.amount = parseFloat(qtyOnly[1]); updated.unit = qtyOnly[2]; }
+      else if (userInput.match(/^\d+\.?\d*$/)) updated.amount = parseFloat(userInput);
+      else { if (!updated.name) updated.name = userInput.trim(); else if (!updated.unit) updated.unit = userInput.trim(); }
+    }
+    if (!updated.cat && updated.name) { const cat = detectCategory(updated.name); if (cat) updated.cat = cat.id; }
+    return updated;
+  };
+
+  const startExtraQuestions = (item, newMsgs) => {
+    const catId = item.cat;
+    const questions = CATEGORY_EXTRA_QUESTIONS[catId];
+    if (!questions || questions.length === 0) {
+      finishGathering(item, newMsgs);
+      return;
+    }
+    newMsgs.push({ role: "bot", type: "text", text: `${item.name} ${item.amount}${item.unit} ですね。\n追加で記録できる情報があります。\n\n${questions[0].question}` });
+    setExtraGathering({ item, catId, questions, currentIdx: 0 });
+    setGathering(null);
+    setPendingSave(null);
+  };
+
+  const handleExtraAnswer = (userMsg, newMsgs) => {
+    const eg = extraGathering;
+    const q = eg.questions[eg.currentIdx];
+    const parsed = q.parse(userMsg);
+    const updatedItem = { ...eg.item, extra: { ...eg.item.extra } };
+
+    if (parsed !== null && parsed !== undefined) {
+      updatedItem.extra[q.key] = parsed;
+    }
+    const nextIdx = eg.currentIdx + 1;
+    if (nextIdx < eg.questions.length) {
+      newMsgs.push({ role: "bot", type: "text", text: eg.questions[nextIdx].question });
+      setExtraGathering({ ...eg, item: updatedItem, currentIdx: nextIdx });
+    } else {
+      finishGathering(updatedItem, newMsgs);
+      setExtraGathering(null);
+    }
+  };
+
+  const finishGathering = (item, newMsgs) => {
+    const summary = [item.name, `${item.amount}${item.unit}`];
+    if (item.house) summary.push(item.house);
+
+    const catObj = MATERIAL_CATEGORIES.find(c => c.id === item.cat);
+    const catLabel = catObj ? ` [${catObj.name}]` : "";
+
+    const extraLines = [];
+    if (item.extra?.npk && typeof item.extra.npk === "object") extraLines.push(`成分比: N${item.extra.npk.n}-P${item.extra.npk.p}-K${item.extra.npk.k}`);
+    if (item.extra?.jasApproved === "yes") extraLines.push("JAS有機適合: はい");
+    if (item.extra?.jasApproved === "no") extraLines.push("JAS有機適合: いいえ");
+    if (item.extra?.dilution > 0) extraLines.push(`希釈倍率: ${item.extra.dilution}倍`);
+    if (item.extra?.target) extraLines.push(`対象: ${item.extra.target}`);
+    if (item.extra?.harvestDays >= 0) extraLines.push(`収穫前日数: ${item.extra.harvestDays === -1 ? "不明" : item.extra.harvestDays + "日"}`);
+    if (item.extra?.supplier) extraLines.push(`購入先: ${item.extra.supplier}`);
+    if (item.extra?.variety) extraLines.push(`品種: ${item.extra.variety}`);
+    if (item.extra?.grafted && item.extra.grafted !== "不明") extraLines.push(`接木/実生: ${item.extra.grafted}`);
+
+    let confirmText = `${summary.join(" / ")}${catLabel}`;
+    if (extraLines.length > 0) confirmText += `\n${extraLines.join("、")}`;
+    newMsgs.push({ role: "bot", type: "text", text: confirmText });
+
+    const related = findRelatedRecords(records, item.house, [item.name]);
+    if (related.length > 0) {
+      const totalPast = r1(related.reduce((s, r) => s + r.amount, 0));
+      newMsgs.push({ role: "bot", type: "text", text: `参考：過去に ${item.name} を合計 ${totalPast}${related[0].unit} 記録しています。` });
+    }
+    setPendingSave({ items: [item], editable: true });
+    setGathering(null);
+  };
+
+  const handleSend = () => {
+    const hasText = input.trim().length > 0;
+    const hasFile = attachedFile !== null;
+    if (!hasText && !hasFile) return;
+    const userMsg = input.trim();
+    setInput("");
+    const newMsgs = [...messages];
+
+    if (extraGathering) {
+      newMsgs.push({ role: "user", type: "text", text: userMsg });
+      if (["やめる","キャンセル","スキップ","飛ばす"].some(k => userMsg.includes(k))) {
+        finishGathering(extraGathering.item, newMsgs);
+        setExtraGathering(null);
+        setMessages(newMsgs);
+        return;
+      }
+      handleExtraAnswer(userMsg, newMsgs);
+      setMessages(newMsgs);
+      return;
+    }
+
+    if (gathering) {
+      newMsgs.push({ role: "user", type: "text", text: userMsg });
+      if (["やめる","キャンセル","やめ","いいえ","いや"].some(k => userMsg.includes(k))) {
+        newMsgs.push({ role: "bot", type: "text", text: "入力をキャンセルしました。" });
+        setGathering(null); setPendingSave(null); setMessages(newMsgs); return;
+      }
+      const updated = mergeGatheringInput(gathering, userMsg);
+      const { isComplete } = validateMaterialRecord(updated);
+      if (isComplete) {
+        if (updated.cat && CATEGORY_EXTRA_QUESTIONS[updated.cat]) startExtraQuestions(updated, newMsgs);
+        else finishGathering(updated, newMsgs);
+      } else {
+        setGathering(updated);
+        newMsgs.push({ role: "bot", type: "text", text: buildMissingQuestion(updated) });
+      }
+      setMessages(newMsgs);
+      return;
+    }
+
+    setPendingSave(null);
+
+    if (hasFile) {
+      newMsgs.push({ role: "user", type: "attachment", text: userMsg || attachedFile.name, file: { ...attachedFile } });
+      const analysis = simulateFileAnalysis(userMsg || attachedFile.name);
+      newMsgs.push({ role: "bot", type: "analysis", text: `添付ファイルを分析しました。\n\n資材名: ${analysis.name}\n詳細: ${analysis.detail}\n\n${analysis.suggestion}` });
+      const partial = { name: analysis.name, amount: 0, unit: "", house: "", cost: 0, cat: analysis.cat, extra: {} };
+      newMsgs.push({ role: "bot", type: "text", text: buildMissingQuestion(partial) });
+      setGathering(partial);
+      setAttachedFile(null);
+      setMessages(newMsgs);
+      return;
+    }
+
+    newMsgs.push({ role: "user", type: "text", text: userMsg });
+
+    const dilMatch = userMsg.match(/(\d+)\s*倍.*?(\d+\.?\d*)\s*(L|リットル)/i);
+    if (dilMatch) {
+      const d = calcDilution(parseInt(dilMatch[1]), parseFloat(dilMatch[2]));
+      if (d) {
+        newMsgs.push({ role: "bot", type: "text", text: `希釈計算：\n${d.dilutionRate}倍希釈 × ${d.waterLiters}L\n→ 薬剤 ${d.chemMl}ml を水 ${d.waterLiters}L に混ぜてください。` });
+        setMessages(newMsgs);
+        return;
+      }
+    }
+
+    const directRecord = parseDirectRecord(userMsg);
+    if (directRecord) {
+      const { isComplete } = validateMaterialRecord(directRecord);
+      if (isComplete) {
+        if (directRecord.cat && CATEGORY_EXTRA_QUESTIONS[directRecord.cat]) startExtraQuestions(directRecord, newMsgs);
+        else finishGathering(directRecord, newMsgs);
+        setMessages(newMsgs);
+        return;
+      } else {
+        newMsgs.push({ role: "bot", type: "text", text: buildMissingQuestion(directRecord) });
+        setGathering(directRecord);
+        setMessages(newMsgs);
+        return;
+      }
+    }
+
+    const parsed = parseChat(userMsg, houses);
+    if (parsed.type === "help") {
+      newMsgs.push({ role: "bot", type: "text",
+        text: "こんな風に使えます：\n\n・「1号ハウスのフィルム必要量は？」\n・「1号ハウスに鶏糞を使いたい」\n・「全棟の資材をまとめて」\n・「発酵鶏糞 20kg 購入」\n・「BT剤 1000倍で50L 希釈計算」\n・写真を添付して資材情報を読み取り" });
+    } else if (parsed.type === "ask_house") {
+      const confirmed = parsed.houses.filter(h => h.confirmed);
+      const draft = parsed.houses.filter(h => !h.confirmed);
+      let text = `どのハウスの計算をしますか？\n\n${confirmed.map(h => `  ${h.name}（${h.width}m×${h.length}m）`).join("\n")}`;
+      if (draft.length > 0) text += `\n\n※ 以下は登録が完了していません：\n${draft.map(h => `  ${h.name}（下書き）`).join("\n")}`;
+      newMsgs.push({ role: "bot", type: "text", text });
+    } else if (parsed.type === "ask_category") {
+      newMsgs.push({ role: "bot", type: "text", text: `${parsed.targetHouses.map(h => h.name).join("・")} の何を計算しますか？\n\nフィルム、肥料（有機/化成）、マルチ、誘引紐、防除資材、土壌改良材 などに対応しています。` });
+    } else if (parsed.type === "incomplete_houses") {
+      newMsgs.push({ role: "bot", type: "text", text: `${parsed.houses.map(h => h.name).join("・")} はまだ登録が確認されていません。\n「ハウス登録」画面で必要情報を入力して「登録を確認する」を押してください。` });
+    } else if (parsed.type === "missing_info") {
+      const lines = parsed.missingDetails.map(d => `${d.house.name}：${d.missing.map(m => m.label).join("、")} が未入力`);
+      newMsgs.push({ role: "bot", type: "text", text: `計算に必要な情報が不足しています。\n\n${lines.join("\n")}\n\n「ハウス登録」画面で入力してください。` });
+    } else if (parsed.type === "result") {
+      newMsgs.push({ role: "bot", type: "result", items: parsed.items });
+      const saveItems = [];
+      parsed.items.forEach(({ house, details }) => {
+        details.forEach(d => {
+          if (d.saveables) d.saveables.forEach(s => saveItems.push({ house: house.name, ...s, extra: s.extra || {} }));
+          else if (d.saveable) saveItems.push({ house: house.name, ...d.saveable, extra: d.saveable.extra || {} });
+        });
+      });
+      if (saveItems.length > 0) {
+        const houseNames = [...new Set(saveItems.map(s => s.house))];
+        houseNames.forEach(hn => {
+          const pastForHouse = records.filter(r => r.house === hn);
+          if (pastForHouse.length > 0) {
+            const sm = {};
+            pastForHouse.forEach(r => { const k = r.name; if (!sm[k]) sm[k] = { total: 0, unit: r.unit }; sm[k].total = r1(sm[k].total + r.amount); });
+            const lines = Object.entries(sm).map(([name, v]) => `  ${name}: ${v.total}${v.unit}`);
+            newMsgs.push({ role: "bot", type: "text", text: `参考：${hn} の過去記録\n${lines.join("\n")}` });
+          }
+        });
+        setPendingSave({ items: saveItems });
+      }
+    }
+    setMessages(newMsgs);
+  };
+
+  const handleSave = () => {
+    if (!pendingSave) return;
+    const validItems = pendingSave.items.filter(it => validateMaterialRecord(it).isComplete);
+    if (validItems.length === 0) return;
+    const now = new Date().toISOString().slice(0, 10);
+    setRecords([...records, ...validItems.map(item => ({ ...item, date: now }))]);
+    setMessages([...messages, { role: "bot", type: "text", text: `✅ ${validItems.length}件を記録しました。` }]);
+    setPendingSave(null);
+  };
+  const handleSkipSave = () => { setPendingSave(null); setGathering(null); setExtraGathering(null); setMessages([...messages, { role: "bot", type: "text", text: "了解です。他に何かありますか？" }]); };
+  const updatePendingItem = (idx, key, val) => { if (!pendingSave) return; setPendingSave({ ...pendingSave, items: pendingSave.items.map((it, i) => i === idx ? { ...it, [key]: val } : it) }); };
+  const pendingValidation = pendingSave ? pendingSave.items.map(it => validateMaterialRecord(it)) : [];
+  const allPendingComplete = pendingValidation.every(v => v.isComplete);
+
+  const bubbleMax = isDesktop ? "max-w-md" : "max-w-xs";
+  const resultMax = isDesktop ? "420px" : "340px";
+  const saveMax = isDesktop ? "400px" : "320px";
+
+  return (
+    <div className="flex flex-col" style={{ height: isDesktop ? "calc(100vh - 64px)" : "calc(100vh - 120px)" }}>
+      <div className="flex-1 overflow-y-auto px-1 pb-4 space-y-3">
+        {messages.map((msg, i) => (
+          <div key={i}>
+            {msg.role === "user" && msg.type === "attachment" ? (
+              <div className="flex justify-end"><div className={bubbleMax}>{msg.file?.isImage && <div className="mb-1 rounded-xl overflow-hidden border border-gray-200 shadow-sm"><img src={msg.file.url} alt={msg.file.name} className="w-full max-h-48 object-cover" /></div>}<div className="bg-green-600 text-white rounded-2xl rounded-br-md px-4 py-2.5 text-sm shadow-sm whitespace-pre-wrap">{!msg.file?.isImage && <div className="text-xs opacity-80 mb-1">📎 {msg.file.name}</div>}{msg.text}</div></div></div>
+            ) : msg.role === "user" ? (
+              <div className="flex justify-end"><div className={`bg-green-600 text-white rounded-2xl rounded-br-md px-4 py-2.5 ${bubbleMax} text-sm shadow-sm whitespace-pre-wrap`}>{msg.text}</div></div>
+            ) : msg.type === "analysis" ? (
+              <div className="flex justify-start"><div className={`bg-blue-50 border border-blue-200 rounded-2xl rounded-bl-md px-4 py-3 ${bubbleMax} shadow-sm`}><div className="text-xs text-blue-500 font-medium mb-1">分析結果</div><div className="text-sm text-blue-900 whitespace-pre-wrap">{msg.text}</div></div></div>
+            ) : msg.type === "text" ? (
+              <div className="flex justify-start"><div className={`bg-white border border-gray-100 rounded-2xl rounded-bl-md px-4 py-2.5 ${bubbleMax} text-sm shadow-sm whitespace-pre-wrap text-gray-700`}>{msg.text}</div></div>
+            ) : msg.type === "result" ? (
+              <div className="flex justify-start">
+                <div className="bg-white border border-gray-100 rounded-2xl rounded-bl-md px-3 py-3 shadow-sm" style={{ maxWidth: resultMax, width: "100%" }}>
+                  {msg.items.map((entry, ei) => (
+                    <div key={ei} className={ei > 0 ? "mt-3 pt-3 border-t border-gray-100" : ""}>
+                      <div className="flex items-center gap-1.5 mb-2">
+                        <span>{entry.crop.emoji}</span>
+                        <span className="text-sm font-bold text-gray-800">{entry.house.name}</span>
+                        <Badge color="blue">{entry.crop.name}</Badge>
+                      </div>
+                      {entry.details.map((d, di) => (
+                        <div key={di} className="mb-2">
+                          <div className="text-xs text-gray-400 font-medium mb-1">{d.category}（{d.materialName}）</div>
+                          {d.items.map((item, ii) => (
+                            <div key={ii} className={`flex justify-between py-0.5 px-2 rounded text-xs ${item.highlight ? "bg-green-50 font-bold text-green-700" : "text-gray-600"}`}>
+                              <span>{item.label}</span><span>{item.value} {item.unit}</span>
+                            </div>
+                          ))}
+                        </div>
+                      ))}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : null}
+          </div>
+        ))}
+
+        {(gathering || extraGathering) && !pendingSave && (
+          <div className="flex justify-start">
+            <div className={`bg-blue-50 border border-blue-200 rounded-2xl rounded-bl-md px-4 py-2 ${bubbleMax} shadow-sm`}>
+              <div className="text-xs text-blue-600 font-medium">{extraGathering ? "追加情報の入力中…" : "入力待ち…"}</div>
+              {gathering && <div className="text-xs text-blue-500 mt-0.5">{gathering.name && `資材名: ${gathering.name}`}{gathering.amount > 0 && ` / ${gathering.amount}`}{gathering.unit && gathering.unit}</div>}
+              <button onClick={() => { setGathering(null); setExtraGathering(null); setMessages([...messages, { role: "bot", type: "text", text: "入力をキャンセルしました。" }]); }} className="text-xs text-gray-400 hover:text-red-400 mt-1">{extraGathering ? "スキップして保存" : "キャンセル"}</button>
+            </div>
+          </div>
+        )}
+
+        {pendingSave && (
+          <div className="flex justify-start">
+            <div className="bg-amber-50 border border-amber-200 rounded-2xl rounded-bl-md px-4 py-3 shadow-sm" style={{ maxWidth: saveMax, width: "100%" }}>
+              <div className="text-sm text-amber-800 font-medium mb-1">この内容で記録しますか？</div>
+              <div className="text-xs text-gray-500 mb-2">必須: 資材名・数量・単位 ／ 任意: ハウス名</div>
+              <div className="space-y-1.5 mb-3">
+                {pendingSave.items.map((it, idx) => {
+                  const v = pendingValidation[idx];
+                  const catObj = MATERIAL_CATEGORIES.find(c => c.id === it.cat);
+                  return (
+                    <div key={idx} className="text-xs text-amber-700">
+                      {pendingSave.editable ? (
+                        <div className="space-y-1">
+                          {catObj && <div className="text-xs text-purple-600 font-medium">{catObj.icon} {catObj.name}</div>}
+                          <input value={it.name} onChange={e => updatePendingItem(idx, "name", e.target.value)} placeholder="資材名 *"
+                            className={`w-full px-2 py-1.5 border rounded text-xs bg-white focus:outline-none focus:ring-1 focus:ring-green-400 ${!it.name ? "border-red-300 bg-red-50" : "border-amber-200"}`} />
+                          <div className="flex gap-1">
+                            <input type="number" value={it.amount || ""} onChange={e => updatePendingItem(idx, "amount", parseFloat(e.target.value)||0)} placeholder="数量 *"
+                              className={`w-20 px-2 py-1.5 border rounded text-xs bg-white focus:outline-none focus:ring-1 focus:ring-green-400 ${!it.amount ? "border-red-300 bg-red-50" : "border-amber-200"}`} />
+                            <input value={it.unit} onChange={e => updatePendingItem(idx, "unit", e.target.value)} placeholder="単位 *"
+                              className={`w-16 px-2 py-1.5 border rounded text-xs bg-white focus:outline-none focus:ring-1 focus:ring-green-400 ${!it.unit ? "border-red-300 bg-red-50" : "border-amber-200"}`} />
+                            <input value={it.house || ""} onChange={e => updatePendingItem(idx, "house", e.target.value)} placeholder="ハウス名"
+                              className="flex-1 px-2 py-1.5 border border-amber-200 rounded text-xs bg-white focus:outline-none focus:ring-1 focus:ring-green-400" />
+                          </div>
+                          {it.extra?.jasApproved === "yes" && <div className="text-xs text-green-600">JAS有機適合</div>}
+                          {it.extra?.npk && typeof it.extra.npk === "object" && <div className="text-xs text-gray-500">N{it.extra.npk.n}-P{it.extra.npk.p}-K{it.extra.npk.k}</div>}
+                          {v && !v.isComplete && <div className="text-xs text-red-500">不足: {v.missing.join("、")}</div>}
+                        </div>
+                      ) : (
+                        <div className="flex items-center justify-between">
+                          <span>{catObj ? `${catObj.icon} ` : ""}{it.house ? `${it.house}: ` : ""}{it.name} {it.amount}{it.unit}{it.extra?.jasApproved === "yes" ? " [JAS]" : ""}</span>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+              <div className="flex gap-2">
+                <button onClick={handleSave} disabled={!allPendingComplete}
+                  className={`flex-1 py-2 text-xs font-medium rounded-lg transition-colors ${allPendingComplete ? "bg-green-600 text-white hover:bg-green-700" : "bg-gray-200 text-gray-400 cursor-not-allowed"}`}>記録する</button>
+                <button onClick={handleSkipSave} className="flex-1 py-2 bg-gray-100 text-gray-500 text-xs font-medium rounded-lg hover:bg-gray-200 transition-colors">しない</button>
+              </div>
+            </div>
+          </div>
+        )}
+        <div ref={bottomRef} />
+      </div>
+
+      {attachedFile && (
+        <div className="bg-gray-50 border-t border-gray-100 px-3 py-2">
+          <div className="flex items-center gap-2">
+            {attachedFile.isImage ? <img src={attachedFile.url} alt="" className="w-12 h-12 object-cover rounded-lg border border-gray-200" /> : <div className="w-12 h-12 bg-blue-100 rounded-lg flex items-center justify-center text-blue-500 text-lg">📄</div>}
+            <div className="flex-1 min-w-0"><div className="text-xs font-medium text-gray-700 truncate">{attachedFile.name}</div><div className="text-xs text-gray-400">{(attachedFile.size / 1024).toFixed(0)} KB</div></div>
+            <button onClick={removeAttachment} className="text-gray-400 hover:text-red-400 text-lg px-1">×</button>
+          </div>
+        </div>
+      )}
+
+      <div className="bg-white border-t border-gray-100 px-2 py-2">
+        {(gathering || extraGathering) && <div className="px-3 py-1.5 mb-1 bg-blue-50 rounded-lg"><div className="text-xs text-blue-600">{extraGathering ? "追加情報を入力中（「スキップ」で省略OK）" : "入力中: 不足情報を入力してください（「やめる」でキャンセル）"}</div></div>}
+        <div className="flex gap-1.5 items-end">
+          <input type="file" ref={cameraInputRef} onChange={handleFileSelect} accept="image/*" capture="environment" className="hidden" />
+          <input type="file" ref={fileInputRef} onChange={handleFileSelect} accept="image/*,.pdf,.jpg,.jpeg,.png" className="hidden" />
+          {!isDesktop && <button onClick={() => cameraInputRef.current?.click()} className="px-2 py-2.5 text-gray-400 hover:text-green-600 transition-colors" title="カメラで撮影">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M23 19a2 2 0 01-2 2H3a2 2 0 01-2-2V8a2 2 0 012-2h4l2-3h6l2 3h4a2 2 0 012 2z" /><circle cx="12" cy="13" r="4" /></svg>
+          </button>}
+          <button onClick={() => fileInputRef.current?.click()} className="px-2 py-2.5 text-gray-400 hover:text-green-600 transition-colors" title="ファイルを添付">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48" /></svg>
+          </button>
+          <input value={input} onChange={e => setInput(e.target.value)} onKeyDown={e => e.key === "Enter" && !e.nativeEvent.isComposing && handleSend()}
+            placeholder={extraGathering ? "追加情報を入力…" : gathering ? "不足情報を入力…" : "資材の相談や、写真を添付…"}
+            className="flex-1 px-4 py-2.5 border border-gray-200 rounded-full text-sm focus:outline-none focus:ring-2 focus:ring-green-400" />
+          <button onClick={handleSend} className="px-4 py-2.5 bg-green-600 text-white rounded-full text-sm font-medium hover:bg-green-700 transition-colors shadow-sm">送信</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ================================================================
+//  画面③ 資材記録（累計・個別削除・カテゴリ表示）
+// ================================================================
+function RecordsPage({ records, setRecords }) {
+  const [deleteTarget, setDeleteTarget] = useState(null);
+  const summary = useMemo(() => {
+    const map = {};
+    let totalCost = 0;
+    records.forEach(r => {
+      const key = `${r.name}||${r.unit}`;
+      if (!map[key]) map[key] = { name: r.name, unit: r.unit, total: 0, cost: 0, count: 0, houses: new Set(), cat: r.cat, jas: false };
+      map[key].total = r1(map[key].total + r.amount);
+      map[key].cost += (r.cost || 0);
+      map[key].count++;
+      if (r.house) map[key].houses.add(r.house);
+      if (r.extra?.jasApproved === "yes") map[key].jas = true;
+      totalCost += (r.cost || 0);
+    });
+    return { items: Object.values(map).sort((a, b) => b.total - a.total), totalCost: r0(totalCost), totalEntries: records.length };
+  }, [records]);
+
+  const deleteRecord = (idx) => { setRecords(records.filter((_, i) => i !== records.length - 1 - idx)); setDeleteTarget(null); };
+
+  return (
+    <div className="flex flex-col gap-4">
+      <div className="bg-gradient-to-br from-green-600 to-emerald-700 rounded-xl p-4 text-white shadow-lg">
+        <div className="text-xs opacity-80 mb-1">資材使用 累計サマリー</div>
+        <div className="flex items-end justify-between">
+          <div><div className="text-2xl font-bold">{summary.totalEntries}<span className="text-sm ml-1">件</span></div><div className="text-xs opacity-70 mt-0.5">{summary.items.length} 種類の資材</div></div>
+          {summary.totalCost > 0 && <div className="text-right"><div className="text-xs opacity-70">概算コスト</div><div className="text-lg font-bold">¥{summary.totalCost.toLocaleString()}</div></div>}
+        </div>
+      </div>
+
+      {summary.items.length === 0 ? (
+        <div className="text-center py-12"><div className="text-4xl mb-3">📋</div><div className="text-sm text-gray-400">まだ記録がありません</div><div className="text-xs text-gray-300 mt-1">チャットで資材を計算・入力して「記録する」を押すと、ここに累計が表示されます</div></div>
+      ) : (
+        <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
+          <div className="px-4 py-3 bg-gradient-to-r from-green-50 to-emerald-50 border-b border-green-100"><h3 className="text-sm font-bold text-green-800">資材別 累計一覧</h3></div>
+          <div className="divide-y divide-gray-50">
+            {summary.items.map((item, i) => {
+              const catObj = MATERIAL_CATEGORIES.find(c => c.id === item.cat);
+              return (
+                <div key={i} className="px-4 py-3 flex items-center justify-between">
+                  <div>
+                    <div className="text-sm font-medium text-gray-800 flex items-center gap-1.5">
+                      {catObj && <span>{catObj.icon}</span>}
+                      {item.name}
+                      {item.jas && <span className="text-xs bg-green-100 text-green-600 px-1.5 py-0.5 rounded-full">JAS</span>}
+                    </div>
+                    <div className="text-xs text-gray-400 mt-0.5">{item.count}回 {item.houses.size > 0 && `｜ ${[...item.houses].join("・")}`}</div>
+                  </div>
+                  <div className="text-right"><div className="text-sm font-bold text-green-700">{item.total} <span className="text-xs font-normal text-gray-400">{item.unit}</span></div>{item.cost > 0 && <div className="text-xs text-amber-600">¥{r0(item.cost).toLocaleString()}</div>}</div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {records.length > 0 && (
+        <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
+          <div className="px-4 py-3 bg-gray-50 border-b border-gray-100 flex justify-between items-center"><h3 className="text-sm font-bold text-gray-700">記録履歴</h3><button onClick={() => setDeleteTarget("all")} className="text-xs text-red-400 hover:text-red-600">全削除</button></div>
+          <div className="divide-y divide-gray-50 max-h-64 overflow-y-auto">
+            {[...records].reverse().map((r, i) => {
+              const catObj = MATERIAL_CATEGORIES.find(c => c.id === r.cat);
+              return (
+                <div key={i} className="px-4 py-2 flex items-center justify-between text-xs group">
+                  <div><span className="text-gray-400 mr-2">{r.date}</span>{catObj && <span className="mr-1">{catObj.icon}</span>}<span className="text-gray-600">{r.house}</span></div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-gray-700 font-medium">{r.name} {r.amount}{r.unit}{r.extra?.jasApproved === "yes" ? " [JAS]" : ""}</span>
+                    <button onClick={() => setDeleteTarget(i)} className="text-gray-300 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity px-1">×</button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {deleteTarget === "all" && <ConfirmDialog title="記録の全削除" message={`すべての資材記録（${records.length}件）を削除します。\nこの操作は元に戻せません。`} confirmLabel="全削除する" confirmColor="red" onConfirm={() => { setRecords([]); setDeleteTarget(null); }} onCancel={() => setDeleteTarget(null)} />}
+      {typeof deleteTarget === "number" && (() => { const r = [...records].reverse()[deleteTarget]; if (!r) return null; return <ConfirmDialog title="記録の削除" message={`「${r.name} ${r.amount}${r.unit}」（${r.date}）を削除しますか？`} confirmLabel="削除する" confirmColor="red" onConfirm={() => deleteRecord(deleteTarget)} onCancel={() => setDeleteTarget(null)} />; })()}
+    </div>
+  );
+}
+
+// ================================================================
+//  メインアプリ
+// ================================================================
+const PAGES = [
+  { key: "register", label: "ハウス登録", icon: "📝" },
+  { key: "chat",     label: "相談",       icon: "💬" },
+  { key: "records",  label: "資材記録",   icon: "📋" },
+];
+
+function App() {
+  const [houses, setHouses] = useState(INITIAL_HOUSES);
+  const [records, setRecords] = useState([]);
+  const [page, setPage] = useState("chat");
+  const [isDesktop, setIsDesktop] = useState(() => typeof window !== "undefined" && window.innerWidth >= 768);
+  const draftCount = houses.filter(h => !h.confirmed).length;
+
+  useEffect(() => {
+    const mq = window.matchMedia("(min-width: 768px)");
+    const handler = (e) => setIsDesktop(e.matches);
+    mq.addEventListener("change", handler);
+    return () => mq.removeEventListener("change", handler);
+  }, []);
+
+  const content = (
+    <>
+      {page === "register" && <HouseRegister houses={houses} setHouses={setHouses} />}
+      {page === "chat" && <ChatPage houses={houses} records={records} setRecords={setRecords} isDesktop={isDesktop} />}
+      {page === "records" && <RecordsPage records={records} setRecords={setRecords} />}
+    </>
+  );
+
+  if (isDesktop) {
+    return (
+      <div className="min-h-screen bg-gradient-to-b from-green-50 to-white flex">
+        <div className="w-56 bg-white border-r border-green-100 flex flex-col shadow-sm fixed top-0 left-0 h-full z-20">
+          <div className="px-4 py-4 border-b border-green-100">
+            <h1 className="text-base font-bold text-green-800">🌿 ハウス資材かんたん計算</h1>
+            <div className="mt-1"><Badge>{houses.filter(h => h.confirmed).length}棟登録</Badge></div>
+          </div>
+          <nav className="flex-1 py-2">
+            {PAGES.map(p => (
+              <button key={p.key} onClick={() => setPage(p.key)}
+                className={`w-full px-4 py-3 flex items-center gap-3 text-sm transition-colors relative ${page === p.key ? "bg-green-50 text-green-700 font-bold border-r-2 border-green-600" : "text-gray-500 hover:bg-gray-50 hover:text-gray-700"}`}>
+                <span className="text-lg">{p.icon}</span>
+                <span>{p.label}</span>
+                {p.key === "register" && draftCount > 0 && <span className="ml-auto w-5 h-5 bg-red-500 text-white text-xs rounded-full flex items-center justify-center">{draftCount}</span>}
+              </button>
+            ))}
+          </nav>
+        </div>
+        <div className="flex-1 ml-56">
+          <div className="max-w-2xl mx-auto px-6 py-4">
+            {content}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="min-h-screen bg-gradient-to-b from-green-50 to-white">
+      <div className="bg-white border-b border-green-100 sticky top-0 z-20 shadow-sm">
+        <div className="max-w-lg mx-auto px-4 py-2.5 flex items-center justify-between">
+          <h1 className="text-base font-bold text-green-800">🌿 ハウス資材かんたん計算</h1>
+          <Badge>{houses.filter(h => h.confirmed).length}棟登録</Badge>
+        </div>
+      </div>
+      <div className="max-w-lg mx-auto px-3 py-3" style={{ paddingBottom: "70px" }}>
+        {content}
+      </div>
+      <div className="fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200 shadow-lg z-20">
+        <div className="max-w-lg mx-auto flex">
+          {PAGES.map(p => (
+            <button key={p.key} onClick={() => setPage(p.key)}
+              className={`flex-1 py-2.5 flex flex-col items-center gap-0.5 transition-colors relative ${page === p.key ? "text-green-600" : "text-gray-400 hover:text-gray-600"}`}>
+              <span className="text-lg">{p.icon}</span>
+              <span className="text-xs font-medium">{p.label}</span>
+              {p.key === "register" && draftCount > 0 && <span className="absolute top-1 right-1/4 w-4 h-4 bg-red-500 text-white text-xs rounded-full flex items-center justify-center">{draftCount}</span>}
+            </button>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+  </script>
+</body>
+</html>
