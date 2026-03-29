@@ -504,11 +504,8 @@ function HouseRegister({ houses, setHouses }) {
 //  画面② チャット相談（カテゴリ別質問フロー）
 // ================================================================
 function ChatPage({ houses, records, setRecords, isDesktop }) {
-  const confirmedCount = houses.filter(h => h.confirmed).length;
-  const draftCount = houses.filter(h => !h.confirmed).length;
   const [messages, setMessages] = useState([
-    { role: "bot", type: "text",
-      text: `${confirmedCount}棟のハウスが登録されています。${draftCount > 0 ? `（下書き${draftCount}棟）` : ""}\n何でも気軽にどうぞ。` },
+    { role: "bot", type: "text", text: "何でも気軽にどうぞ。" },
   ]);
   const [input, setInput] = useState("");
   const [pendingSave, setPendingSave] = useState(null);
@@ -973,12 +970,20 @@ const PAGES = [
   { key: "records",  label: "資材記録",   icon: "📋" },
 ];
 
+function loadFromStorage(key, fallback) {
+  try { const v = localStorage.getItem(key); return v ? JSON.parse(v) : fallback; }
+  catch { return fallback; }
+}
+
 function App() {
-  const [houses, setHouses] = useState(INITIAL_HOUSES);
-  const [records, setRecords] = useState([]);
+  const [houses, setHouses] = useState(() => loadFromStorage("noukadx_houses", INITIAL_HOUSES));
+  const [records, setRecords] = useState(() => loadFromStorage("noukadx_records", []));
   const [page, setPage] = useState("chat");
   const [isDesktop, setIsDesktop] = useState(() => typeof window !== "undefined" && window.innerWidth >= 768);
   const draftCount = houses.filter(h => !h.confirmed).length;
+
+  useEffect(() => { localStorage.setItem("noukadx_houses", JSON.stringify(houses)); }, [houses]);
+  useEffect(() => { localStorage.setItem("noukadx_records", JSON.stringify(records)); }, [records]);
 
   useEffect(() => {
     const mq = window.matchMedia("(min-width: 768px)");
